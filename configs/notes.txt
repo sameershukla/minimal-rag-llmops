@@ -1,0 +1,84 @@
+RAG + LLMOps: project notes
+===========================
+
+Status: everything except the Claude call has been run: ingest, retrieval,
+reranking, tracing, eval, the gate, monitoring and the unit tests. The Claude
+call hasn't run because ANTHROPIC_API_KEY wasn't set, so testing used offline
+mode (RAG_OFFLINE=1), where the answer is just the top retrieved chunk.
+
+
+Layout
+------
+configs/rag.yaml              versioned settings: chunking, models, top_k, prompt version
+configs/gates.yaml            CI thresholds + max regression vs baseline
+rag/
+  config.py                   loads config, computes a fingerprint (hash of config + prompt)
+  ingest/normalize.py         .docx -> clean blocks tagged doc / section / kind
+  ingest/chunker.py           structure-aware chunking
+  index/embedder.py           all-MiniLM-L6-v2
+  index/vectordb.py           Chroma; collection name = hash of chunking + embedding config
+  retrieval/retriever.py      vector search, top 10
+  retrieval/reranker.py       cross-encoder rerank, top 4
+  generation/prompts/v1.txt   versioned prompt file
+  generation/llm.py           Claude call (RAG_OFFLINE=1 skips it)
+  observability/tracer.py     timing per stage, tokens, sources -> traces/requests.jsonl
+  monitoring/monitor.py       p50/p95 latency, "I don't know" rate, low-relevance rate, alerts
+  pipeline.py                 ingest() and ask()
+eval/golden.jsonl             14 questions with expected section and facts
+eval/metrics.py               Recall@K, grounding, answer correctness
+eval/run_eval.py              saves eval/results/<version>.json
+eval/gate.py                  pass/fail + promote to baseline
+.github/workflows/rag-ci.yml  PR -> tests -> ingest -> eval -> gate -> deploy
+main.py                       CLI: ingest | ask | eval | gate | monitor
+
+
+How it works
+------------
+- Normalizing turned the 3 chapters into 238 blocks (142 paragraphs,
+  63 list items, 20 code, 13 tables).
+- Chunking produced 53 chunks. A chunk never crosses a heading, code and
+  tables stay whole, and each chunk starts with "Title > Section" so it makes
+  sense on its own.
+- Versioning: any change goes in rag.yaml or a new prompts/v2.txt, then bump
+  `version`. Changing chunking or the embedding model builds a new vector
+  collection instead of mixing old and new vectors.
+- CI gate: the build fails if a metric misses its threshold, or drops more
+  than 5 points against eval/results/baseline.json.
+
+
+Offline test results
+--------------------
+Metric               Result   Gate
+Recall@K             0.93     pass
+Grounding            1.0      pass
+Answer correctness   0.57     fail
+Latency p95          0.64s    pass
+
+- Answer correctness fails in offline mode because the "answer" is just a raw
+  chunk. This showed the gate blocking a deploy; with a real key the score
+  should be higher.
+- The Recall@K miss is real. For "What is the maximum refund Program 02
+  allows?", retrieval returned Chapter 5 sections that never mention $500.
+  The question stays in rather than loosening the eval. A good first thing to
+  improve, e.g. by adding keyword search alongside the vector search.
+
+
+Things to know
+--------------
+- The PyCharm sample main.py was replaced and requirements.txt cut down to
+  what the code uses.
+- Answers use Claude Opus 5 at low effort. The API's automatic fallback is on
+  (retries on another model if Claude declines a request); remove it in
+  rag/generation/llm.py if not wanted.
+- The CI workflow needs an ANTHROPIC_API_KEY repository secret. The folder
+  isn't a git repo yet.
+
+
+To run
+------
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+python main.py ingest
+python main.py eval
+python main.py gate --promote
+
+See README.md for the full change -> eval -> gate -> deploy loop.

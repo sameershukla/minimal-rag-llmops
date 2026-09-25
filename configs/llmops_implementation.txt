@@ -1,0 +1,246 @@
+Where and how LLMOps is implemented
+===================================
+
+The RAG pipeline (normalize -> chunk -> embed -> vector DB -> retrieve ->
+rerank -> LLM) is ordinary application code. LLMOps is the layer around it
+that answers four questions:
+
+  1. Versioning     - What exactly is running, and what changed?
+  2. Evaluation     - Is it good?
+  3. CI/CD gate     - Is it good enough to ship?
+  4. Observability  - What happened on each request, and is prod still healthy?
+     + monitoring
+
+Each section below lists the files (with line numbers) and explains the mechanism.
+
+
+-------------------------------------------------------------------------------
+1. VERSIONING
+-------------------------------------------------------------------------------
+Goal: every setting that can change answer quality is in version control, and
+every eval result and trace can be traced back to the exact setup that
+produced it.
+
+a) One config file for all quality settings
+   configs/rag.yaml
+     line 3    version: v1              <- bump this on every change
+     chunking  max_tokens, overlap
+     embedding model name
+     retrieval top_k, rerank_model, rerank_top_n
+     llm       model, effort, max_tokens, prompt_version (line 27)
+   How: nothing that affects quality is hard-coded in Python. Every change is
+   a diff to this file, so git history is your change log.
+
+b) Versioned prompts
+   rag/generation/prompts/v1.txt          the prompt template
+   rag/generation/prompts.py:7-8          build_prompt() loads prompts/<version>.txt
+   How: to try a new prompt, add v2.txt and set prompt_version: v2. The old
+   prompt stays on disk, so you can switch back by changing one line.
+
+c) Config fingerprint
+   rag/config.py:11-17                    load_config()
+   How: SHA-256 hash of (config + prompt text), first 12 chars.
+   The same fingerprint means the same behaviour. It catches the case where
+   someone edits a prompt or a setting but forgets to bump `version`.
+
+d) Versioned vector index
+   rag/config.py:20-27                    index_name()
+   rag/index/vectordb.py:8-16             _collection() uses that name
+   How: the Chroma collection is named after a hash of the chunking and
+   embedding settings (e.g. docs_f26ca808). If you change chunk size or the
+   embedding model, a new collection is built. Old and new vectors never mix,
+   and changing a prompt doesn't force a re-index.
+
+e) Version stamped on every output
+   eval/run_eval.py:38-39                 eval results carry version + fingerprint
+   eval/run_eval.py:51                    saved as eval/results/<version>.json
+   rag/observability/tracer.py:21-22      every prod trace carries version + fingerprint
+   How: you can compare v1.json with v2.json, and in prod you can filter traces
+   by version (monitor.py:30 lists which versions are live).
+
+
+-------------------------------------------------------------------------------
+2. EVALUATION
+-------------------------------------------------------------------------------
+Goal: turn "does it work?" into numbers you can compare across versions.
+
+a) Golden dataset
+   eval/golden.jsonl
+   Each line: question, expected doc, acceptable sections, required facts.
+   14 questions across Chapters 4, 5 and 6.
+   How: this is the fixed test set. When a question fails in prod, add it here
+   so it can never silently break again.
+
+b) Metrics                               eval/metrics.py
+   recall_at_k        (line 8)   Did the reranked top-N include a chunk from an
+                                 expected section? Measures RETRIEVAL.
+   grounding          (line 17)  Share of answer sentences whose content words
+                                 mostly (>=50%) appear in the retrieved context.
+                                 Measures FAITHFULNESS / hallucination.
+   answer_correctness (line 31)  Share of required facts found in the answer.
+                                 Measures GENERATION quality.
+   latency_p95_s  (run_eval.py)  95th-percentile seconds per question.
+                                 Measures SPEED.
+   How: all four are deterministic and use no LLM, so they're free and give
+   the same result every run. Grounding is a word-overlap proxy; a common
+   upgrade is an LLM-as-judge.
+
+c) Eval runner
+   eval/run_eval.py:19-53                run_eval()
+   How: runs each golden question through the real pipeline (rag/pipeline.py
+   ask()), scores it, prints a per-question line, and writes a summary to
+   eval/results/<version>.json and eval/results/latest.json.
+   Line 24: save_trace=False keeps eval traffic out of the prod traces, so it
+   doesn't skew monitoring.
+
+d) Offline mode
+   rag/generation/llm.py:15, 43          RAG_OFFLINE=1 skips the Claude call
+   How: lets you evaluate retrieval (Recall@K) with no API key or cost.
+   Answer correctness is meaningless in this mode.
+
+
+-------------------------------------------------------------------------------
+3. CI/CD GATE
+-------------------------------------------------------------------------------
+Goal: a code or prompt change can't reach prod unless the eval passes.
+
+      Code/Prompt Change
+             |
+      Run RAG Evaluation            (main.py eval  -> eval/run_eval.py)
+             |
+  Recall@K / Grounding / Latency    (eval/metrics.py)
+             |
+           Pass?                    (main.py gate  -> eval/gate.py)
+          /     \
+        No       Yes
+       Stop     Deploy              (.github/workflows/rag-ci.yml)
+
+a) Thresholds
+   configs/gates.yaml
+     recall_at_k        >= 0.80
+     grounding          >= 0.70
+     answer_correctness >= 0.70
+     latency_p95_s      <= 15.0
+     max_regression       0.05   (line 8)
+
+b) Gate logic                           eval/gate.py
+   check_gate()  (line 16)
+     - Absolute check (lines 20-27): each metric vs its threshold.
+       LOWER_IS_BETTER (line 13) flips the comparison for latency.
+     - Regression check (lines 29-34): fails if a metric drops more than
+       0.05 below eval/results/baseline.json, even if it still clears the
+       threshold. This stops slow quality decline.
+   promote()     (line 37)
+     - Copies latest.json to baseline.json. Only runs on a pass, via
+       `python main.py gate --promote`.
+
+c) Exit code
+   main.py, "gate" branch               sys.exit(1) on failure
+   How: CI systems treat a non-zero exit as a failed step, which stops the
+   pipeline. This single line connects the Python gate to the CI.
+
+d) CI pipeline                          .github/workflows/rag-ci.yml
+   Triggers: every pull request and every push to main.
+   Job eval-gate:
+     pytest -q              unit tests (tests/test_chunker.py)
+     main.py ingest         line 29: rebuild the index
+     main.py eval           line 31: run the golden set
+     main.py gate           line 33: fail the build if the gate fails
+     upload-artifact        keeps eval/results/ for every run, pass or fail
+   Job deploy:
+     needs: eval-gate       line 41: only runs if the gate passed
+     if: main branch        line 42: PRs are gated but never deployed
+   Needs the ANTHROPIC_API_KEY repository secret.
+   The deploy step is currently a placeholder echo.
+
+
+-------------------------------------------------------------------------------
+4. OBSERVABILITY
+-------------------------------------------------------------------------------
+Goal: for any request, see what was retrieved, how long each stage took, what
+it cost, and which version served it.
+
+a) Tracer                               rag/observability/tracer.py
+   Trace.__init__ (line 17)   trace_id, timestamp, version, fingerprint, question
+   Trace.span()   (line 28)   context manager that times one stage
+   Trace.log()    (line 35)   attaches extra fields
+   Trace.save()   (line 38)   adds total latency, appends one JSON line to
+                              traces/requests.jsonl (TRACE_FILE, line 13)
+
+b) Where it's used                      rag/pipeline.py ask()
+   line 30  with trace.span("retrieve")
+   line 32  with trace.span("rerank")
+   line 34  with trace.span("generate")
+   line 37  trace.log(answer, model, tokens in/out, stop_reason,
+                      sources + rerank scores, top_rerank_score)
+   line 46  trace.save()
+
+   Example trace line:
+   {"trace_id": "...", "version": "v1", "fingerprint": "...",
+    "question": "...", "latency_s": {"retrieve": 0.34, "rerank": 0.15,
+    "generate": 2.1, "total": 2.59}, "tokens": {"input": 900, "output": 80},
+    "sources": [{"doc": "Chapter_06", "section": "Three Tiers", ...}], ...}
+
+   How it helps debugging: for a bad answer, the trace shows whether retrieval
+   missed (wrong sources), reranking mis-ordered them (scores), or the LLM
+   went off-context. Per-stage latency shows where time goes.
+
+c) Model fallback
+   rag/generation/llm.py:26-27          fallbacks="default"
+   How: if the model declines a request, the API retries it on a fallback
+   model in the same call. trace "model" records which model actually answered.
+
+
+-------------------------------------------------------------------------------
+5. PRODUCTION MONITORING
+-------------------------------------------------------------------------------
+Goal: catch quality or latency problems in live traffic, where there's no
+golden answer to compare against.
+
+   rag/monitoring/monitor.py
+   summarize() (line 23)  reads the last 500 traces and reports:
+     latency_p50_s / latency_p95_s   speed
+     idk_rate             share of "I don't know" answers -> retrieval is
+                          failing, or users ask about things not in the docs
+     low_relevance_rate   share of requests whose best rerank score < 0 ->
+                          user questions are drifting away from the docs
+     avg_output_tokens    cost trend
+     versions             which config versions are serving traffic
+   ALERTS (line 11)       latency_p95 > 15s, idk_rate > 20%,
+                          low_relevance_rate > 30%
+   Line 37 builds the alert list.
+
+   Run: python main.py monitor (e.g. on a cron or scheduled CI job).
+
+   The feedback loop: monitor flags a problem -> read those traces -> add the
+   failing questions to eval/golden.jsonl -> fix chunking, prompt or settings
+   -> bump version -> the CI gate proves the fix before it ships.
+
+
+-------------------------------------------------------------------------------
+THE FULL LOOP
+-------------------------------------------------------------------------------
+  edit configs/rag.yaml or add prompts/v2.txt, bump version     (Versioning)
+        -> python main.py ingest     new index if chunking/embedding changed
+        -> python main.py eval       eval/results/v2.json        (Evaluation)
+        -> python main.py gate       thresholds + no regression   (CI/CD gate)
+        -> CI deploys on main if the gate passes
+        -> every request traced to traces/requests.jsonl       (Observability)
+        -> python main.py monitor    alerts                      (Monitoring)
+        -> failures become new golden questions -> repeat
+
+
+-------------------------------------------------------------------------------
+WHAT IS KEPT DELIBERATELY SIMPLE (next steps for real production)
+-------------------------------------------------------------------------------
+- Traces go to a local JSONL file. In prod, send them to a tracing tool
+  (Langfuse, Arize Phoenix, OpenTelemetry, Datadog).
+- Alerts are printed, not sent. Hook them to Slack, PagerDuty or email.
+- Grounding and correctness are word-overlap checks. An LLM-as-judge is more
+  accurate but costs money on every eval run.
+- 14 golden questions is a starter set. Aim for 50-200, grown from real
+  prod failures.
+- The deploy job is a placeholder, and baseline promotion is manual
+  (gate --promote).
+- No user feedback capture (thumbs up/down). Adding it to the trace would
+  give a real quality signal for monitoring.

@@ -1,0 +1,126 @@
+{
+  "version": "v1",
+  "fingerprint": "898d40016b26",
+  "model": "claude-opus-5",
+  "n": 14,
+  "metrics": {
+    "recall_at_k": 0.929,
+    "grounding": 0.94,
+    "answer_correctness": 1.0,
+    "latency_p95_s": 5.923
+  },
+  "cases": [
+    {
+      "question": "What does the PII guardrail replace a social security number with?",
+      "answer": "The guardrail's `sanitize_pii` function replaces a matched SSN (three digits, two digits, four digits, e.g. 123-45-6789) with the placeholder `[REDACTED_SSN]` [2]. This substitution is done via `SSN_PATTERN.sub(\"[REDACTED_SSN]\", text)` [2].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 5.923
+    },
+    {
+      "question": "Why are PII detection and sanitization kept as two separate nodes?",
+      "answer": "Because they answer different questions: detection determines what is in the message, while sanitization decides what to do about it \u2014 a policy that may change (e.g., redact and log, notify compliance, or refuse the message entirely) [1]. Keeping them separate means the policy can be changed without rewriting the detector, making the guardrail cheap to improve rather than something people work around [1][2].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 3.8360000000000003
+    },
+    {
+      "question": "Why do the redaction placeholders have labels instead of being blank?",
+      "answer": "Labelled placeholders (e.g., `[REDACTED_SSN]`) preserve meaning while removing risk: the model can still tell the customer mentioned their SSN and respond sensibly, such as reassuring them it doesn't need the number [1], [4]. Silent/unlabelled stripping leaves a strange half sentence, so the model may ask the customer to repeat what was just removed, producing worse answers [1], [2].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 2.759
+    },
+    {
+      "question": "What kinds of PII does the pattern guardrail fail to catch?",
+      "answer": "The regex guardrail misses PII written as words rather than digits (e.g., \"one two three, four five...\"), non-US formats such as Aadhaar numbers, IBANs, UK national insurance or passport numbers, values split across messages or broken by stray characters, and names and addresses, which no simple pattern finds reliably [2]. It also produces false positives, such as a 13\u201316 digit order or tracking number matching the credit card pattern [2][3].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 2.764
+    },
+    {
+      "question": "Does LangGraph detect or redact PII itself?",
+      "answer": "No. LangGraph does not detect PII, redact PII, or call the model; those jobs are done by ordinary Python functions the program writes itself, using regex patterns in guardrail.py [1][2]. LangGraph only coordinates: holding shared state, calling nodes in the order the edges describe, merging results, and stopping at END [1].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 2.7119999999999997
+    },
+    {
+      "question": "What is the maximum refund the action guardrail in Program 02 allows?",
+      "answer": "The documents don't state the limit explicitly, so I don't know based on the provided documents. They only note that a $499 refund passed as \"one cent below the line,\" which implies a $500 threshold [3], and that the limit lives in the guardrail rather than the prompt or tool [4].",
+      "recall_at_k": 0.0,
+      "grounding": 0.5,
+      "answer_correctness": 1.0,
+      "latency_s": 3.7399999999999998
+    },
+    {
+      "question": "When a model calls a tool, does the action happen immediately?",
+      "answer": "No. A tool call is only a request \u2014 a structured message saying the model would like to run e.g. `issue_refund` with certain arguments; the model cannot reach into your systems [1]. Code then decides whether to honour it, and in a guarded agent that decision belongs to the guardrail, which runs after the model chooses and before the tool runs [1][3]. Routing makes this structural: a tool call cannot reach the tool without passing the check [2].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 3.174
+    },
+    {
+      "question": "What should happen when a refund is blocked by the guardrail?",
+      "answer": "When a refund is blocked, the block node must still write a ToolMessage explaining the refusal (e.g., \"Refund was not executed. Reason: ...\"), so the model sees the action failed and tells the customer honestly rather than confirming a refund that never happened [1], [3]. It's also required by the protocol: every tool call in a turn must be answered with a result, or the next model call fails \u2014 so extra tool calls beyond the first are each answered with a refusal [1].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 3.4280000000000004
+    },
+    {
+      "question": "Why is checking a refund after the tool runs a mistake?",
+      "answer": "Because a check that runs on the result is only a report, not a guardrail \u2014 by then the money has already moved [1]. The guardrail must run after the model chooses the tool call but before the tool actually executes [3].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 2.9170000000000003
+    },
+    {
+      "question": "What are the three risk tiers for refunds and their amounts?",
+      "answer": "The three tiers are: Low \u2014 $100 or less, executed immediately; Medium \u2014 $100.01 to $500, extra validation then execute; High \u2014 above $500 (or anything invalid), which is blocked and needs human approval [2]. Uncertainty, such as an unknown tool, missing amount, or negative amount, always falls into the High tier [2].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 2.825
+    },
+    {
+      "question": "Which risk tier does an unknown tool or missing amount fall into?",
+      "answer": "Both fall into the **high** risk tier. The classifier returns HIGH for any tool other than `issue_refund` and for a missing, zero, or negative amount, so uncertainty always lands in the strictest tier \u2014 failing closed expressed as a classification [2]. Such requests never reach the tool and are blocked [3], and anything unrecognised belongs in the strictest tier [1].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 9.915
+    },
+    {
+      "question": "What extra check happens for medium risk refunds?",
+      "answer": "Medium\u2011risk requests don't go straight to the tool \u2014 they pass through an extra validation step first, and only reach the tool if it passes [1][3]. For example, a $300 refund for INV 1001 was validated and refunded, while the same amount for \"ORDER 22\" failed validation and was blocked for an invalid invoice format [3]. The medium tier is also where more expensive checks, like a database lookup, become reasonable [2].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 3.6769999999999996
+    },
+    {
+      "question": "Where should the refund risk thresholds come from?",
+      "answer": "Thresholds shouldn't be copied from the book's $100/$500 examples. Best is to reuse the approval authority your business already has (what an agent, a second person, and a manager can approve), then look at your own refund distribution from last year, and consider reversibility \u2014 irreversible actions warrant lower tiers than ones you can undo in a day [1]. Keep to about three tiers and write them as named constants at the top of the file [1].",
+      "recall_at_k": 1.0,
+      "grounding": 0.6666666666666666,
+      "answer_correctness": 1.0,
+      "latency_s": 3.879
+    },
+    {
+      "question": "Why should the model not decide the risk level?",
+      "answer": "Because the model is the very thing being guarded \u2014 if it assigns the risk level, you hand the decision back to the component you were trying to control [3]. A persuasive customer message (e.g., \"this is urgent, my flight is tomorrow\") could then shift the score [1]. Instead, the level is computed in code from the tool arguments, comparing a number to a constant, so no wording can move it [3][4].",
+      "recall_at_k": 1.0,
+      "grounding": 1.0,
+      "answer_correctness": 1.0,
+      "latency_s": 2.975
+    }
+  ]
+}

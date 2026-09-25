@@ -1,0 +1,46 @@
+# Code/prompt change -> run RAG eval -> Recall@K / Grounding / Latency -> pass? deploy : stop
+name: rag-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  eval-gate:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TOKENIZERS_PARALLELISM: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ hashFiles('configs/rag.yaml') }}
+      - run: pip install -r requirements.txt
+      - name: Unit tests
+        run: pytest -q
+      - name: Build index
+        run: python main.py ingest
+      - name: Run RAG evaluation
+        run: python main.py eval
+      - name: Quality gate (fails the build on miss)
+        run: python main.py gate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: eval/results/
+
+  deploy:
+    needs: eval-gate          # only runs if the gate passed
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Deploy step goes here (docker push, kubectl apply, etc.)"

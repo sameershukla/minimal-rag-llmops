@@ -1,0 +1,14 @@
+{"question": "What does the PII guardrail replace a social security number with?", "doc": "Chapter_04", "sections": ["What Counts as PII, and What It Becomes", "The Shared State"], "facts": ["[REDACTED_SSN]"]}
+{"question": "Why are PII detection and sanitization kept as two separate nodes?", "doc": "Chapter_04", "sections": ["Why Detection and Sanitization Are Two Jobs"], "facts": ["policy", "detect"]}
+{"question": "Why do the redaction placeholders have labels instead of being blank?", "doc": "Chapter_04", "sections": ["Why the Placeholders Have Labels", "Five Ways This Goes Wrong"], "facts": ["meaning"]}
+{"question": "What kinds of PII does the pattern guardrail fail to catch?", "doc": "Chapter_04", "sections": ["What This Guardrail Does Not Catch"], "facts": ["words", "names"]}
+{"question": "Does LangGraph detect or redact PII itself?", "doc": "Chapter_04", "sections": ["What LangGraph Does, and What It Does Not"], "facts": ["python"]}
+{"question": "What is the maximum refund the action guardrail in Program 02 allows?", "doc": "Chapter_05", "sections": ["The Guardrail Itself", "Back to the $4,800 Refund", "A Complete Run", "Try It Yourself"], "facts": ["500"]}
+{"question": "When a model calls a tool, does the action happen immediately?", "doc": "Chapter_05", "sections": ["The Main Idea", "Key Takeaways"], "facts": ["request"]}
+{"question": "What should happen when a refund is blocked by the guardrail?", "doc": "Chapter_05", "sections": ["What Happens When a Refund Is Blocked", "Five Ways This Goes Wrong"], "facts": ["reason"]}
+{"question": "Why is checking a refund after the tool runs a mistake?", "doc": "Chapter_05", "sections": ["Five Ways This Goes Wrong"], "facts": ["already"]}
+{"question": "What are the three risk tiers for refunds and their amounts?", "doc": "Chapter_06", "sections": ["Three Tiers", "Five Nodes, Three Paths"], "facts": ["100", "500"]}
+{"question": "Which risk tier does an unknown tool or missing amount fall into?", "doc": "Chapter_06", "sections": ["Three Tiers", "Five Ways This Goes Wrong", "Key Takeaways"], "facts": ["high"]}
+{"question": "What extra check happens for medium risk refunds?", "doc": "Chapter_06", "sections": ["The Second Check", "Five Nodes, Three Paths", "A Complete Run"], "facts": ["invoice"]}
+{"question": "Where should the refund risk thresholds come from?", "doc": "Chapter_06", "sections": ["Where Do the Thresholds Come From?"], "facts": ["approv"]}
+{"question": "Why should the model not decide the risk level?", "doc": "Chapter_06", "sections": ["Five Ways This Goes Wrong", "Three Tiers", "Key Takeaways"], "facts": ["guarded"]}

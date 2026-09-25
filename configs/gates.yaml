@@ -1,0 +1,8 @@
+# CI/CD quality gate: the build fails if any metric misses its threshold.
+thresholds:
+  recall_at_k: 0.80        # min: right section is in the reranked top-N
+  grounding: 0.70          # min: share of answer sentences supported by context
+  answer_correctness: 0.70 # min: share of expected facts present in the answer
+  latency_p95_s: 15.0      # max: seconds per question (end to end)
+# Also fail if a metric drops more than this vs. eval/results/baseline.json
+max_regression: 0.05

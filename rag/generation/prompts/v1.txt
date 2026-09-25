@@ -1,0 +1,8 @@
+Answer the question using only the context below.
+If the context does not contain the answer, say "I don't know based on the provided documents."
+Keep the answer short (2-4 sentences) and cite sources like [1], [2].
+
+Context:
+{context}
+
+Question: {question}

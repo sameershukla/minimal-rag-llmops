@@ -1,0 +1,6 @@
+.chroma/
+traces/
+eval/results/latest.json
+__pycache__/
+.env
+.idea/
